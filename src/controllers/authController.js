@@ -1,7 +1,9 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
+const path = require('path');
 const db = require('../config/db');
+const { uploadFile, getSignedUrl } = require('../utils/storage');
 
 // REGISTER
 const register = async (req, res) => {
@@ -248,4 +250,67 @@ const getUserStats = async (req, res) => {
     }
 };
 
-module.exports = { register, login, getMe, updateProfile, getUserStats };
+// UPLOAD AVATAR
+const uploadAvatar = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No image file provided' });
+        }
+
+        const ext = path.extname(req.file.originalname) || '.jpg';
+        const remoteKey = `avatars/${uuidv4()}${ext}`;
+        const mimeType = req.file.mimetype || 'image/jpeg';
+
+        // Upload to B2
+        await uploadFile(req.file.path, remoteKey, mimeType);
+
+        // Save the key to the database
+        await db.query(
+            'UPDATE users SET avatar_url = $1 WHERE id = $2',
+            [remoteKey, req.user.id]
+        );
+
+        // Clean up local temp file
+        const fs = require('fs');
+        if (fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+        }
+
+        // Return signed URL
+        const signedUrl = getSignedUrl(remoteKey);
+        res.json({
+            message: 'Avatar uploaded successfully',
+            avatar_url: signedUrl,
+        });
+
+    } catch (err) {
+        console.error('UploadAvatar error:', err.message);
+        res.status(500).json({ error: 'Failed to upload avatar' });
+    }
+};
+
+// GET AVATAR URL (signed)
+const getAvatarUrl = async (req, res) => {
+    try {
+        const result = await db.query(
+            'SELECT avatar_url FROM users WHERE id = $1',
+            [req.user.id]
+        );
+
+        if (result.rows.length === 0 || !result.rows[0].avatar_url) {
+            return res.status(404).json({ error: 'No avatar found' });
+        }
+
+        const avatarKey = result.rows[0].avatar_url;
+        const signedUrl = avatarKey.startsWith('http')
+            ? avatarKey
+            : getSignedUrl(avatarKey);
+
+        res.json({ avatar_url: signedUrl });
+    } catch (err) {
+        console.error('GetAvatarUrl error:', err.message);
+        res.status(500).json({ error: 'Server error' });
+    }
+};
+
+module.exports = { register, login, getMe, updateProfile, getUserStats, uploadAvatar, getAvatarUrl };
