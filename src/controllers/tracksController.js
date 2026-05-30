@@ -4,6 +4,16 @@ const path = require('path');
 const fs = require('fs');
 const { uploadFile, deleteFile, getSignedUrl } = require('../utils/storage');
 
+// Helper: convert relative cover_url paths to signed URLs
+const signCoverUrls = (rows) => {
+    return rows.map(row => {
+        if (row.cover_url) {
+            row.cover_url = getSignedUrl(row.cover_url);
+        }
+        return row;
+    });
+};
+
 // UPLOAD a track (supports audio + optional cover image)
 const uploadTrack = async (req, res) => {
     try {
@@ -125,18 +135,21 @@ const uploadTrack = async (req, res) => {
 // GET all tracks
 const getAllTracks = async (req, res) => {
     try {
+        const userId = req.user.id;
         const result = await db.query(`
       SELECT 
         t.id, t.title, t.genre, t.duration, t.play_count,
         t.track_number, t.cover_url, t.created_at,
         a.name AS artist_name, a.id AS artist_id,
-        al.title AS album_title, al.id AS album_id
+        al.title AS album_title, al.id AS album_id,
+        CASE WHEN lt.id IS NOT NULL THEN true ELSE false END AS is_liked
       FROM tracks t
       LEFT JOIN artists a ON t.artist_id = a.id
       LEFT JOIN albums al ON t.album_id = al.id
+      LEFT JOIN liked_tracks lt ON lt.track_id = t.id AND lt.user_id = $1
       ORDER BY t.created_at DESC
-    `);
-        res.json(result.rows);
+    `, [userId]);
+        res.json(signCoverUrls(result.rows));
     } catch (err) {
         console.error('Get tracks error:', err.message);
         res.status(500).json({ error: 'Server error' });
@@ -147,22 +160,29 @@ const getAllTracks = async (req, res) => {
 const getTrack = async (req, res) => {
     try {
         const { id } = req.params;
+        const userId = req.user.id;
         const result = await db.query(`
       SELECT 
         t.*, 
         a.name AS artist_name,
-        al.title AS album_title
+        al.title AS album_title,
+        CASE WHEN lt.id IS NOT NULL THEN true ELSE false END AS is_liked
       FROM tracks t
       LEFT JOIN artists a ON t.artist_id = a.id
       LEFT JOIN albums al ON t.album_id = al.id
+      LEFT JOIN liked_tracks lt ON lt.track_id = t.id AND lt.user_id = $2
       WHERE t.id = $1
-    `, [id]);
+    `, [id, userId]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Track not found' });
         }
 
-        res.json(result.rows[0]);
+        const track = result.rows[0];
+        if (track.cover_url) {
+            track.cover_url = getSignedUrl(track.cover_url);
+        }
+        res.json(track);
     } catch (err) {
         console.error('Get track error:', err.message);
         res.status(500).json({ error: 'Server error' });
@@ -242,23 +262,26 @@ const searchTracks = async (req, res) => {
         const { q } = req.query;
         if (!q) return res.json([]);
 
+        const userId = req.user.id;
         const result = await db.query(`
       SELECT 
         t.id, t.title, t.genre, t.duration, t.cover_url,
         a.name AS artist_name,
-        al.title AS album_title
+        al.title AS album_title,
+        CASE WHEN lt.id IS NOT NULL THEN true ELSE false END AS is_liked
       FROM tracks t
       LEFT JOIN artists a ON t.artist_id = a.id
       LEFT JOIN albums al ON t.album_id = al.id
+      LEFT JOIN liked_tracks lt ON lt.track_id = t.id AND lt.user_id = $2
       WHERE 
         LOWER(t.title) LIKE LOWER($1) OR
         LOWER(a.name) LIKE LOWER($1) OR
         LOWER(al.title) LIKE LOWER($1)
       ORDER BY t.play_count DESC
       LIMIT 20
-    `, [`%${q}%`]);
+    `, [`%${q}%`, userId]);
 
-        res.json(result.rows);
+        res.json(signCoverUrls(result.rows));
     } catch (err) {
         console.error('Search error:', err.message);
         res.status(500).json({ error: 'Server error' });

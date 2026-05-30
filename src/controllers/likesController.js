@@ -1,5 +1,16 @@
 const db = require('../config/db');
 const { v4: uuidv4 } = require('uuid');
+const { getSignedUrl } = require('../utils/storage');
+
+// Helper: convert relative cover_url paths to signed URLs
+const signCoverUrls = (rows) => {
+    return rows.map(row => {
+        if (row.cover_url) {
+            row.cover_url = getSignedUrl(row.cover_url);
+        }
+        return row;
+    });
+};
 
 // LIKE a track
 const likeTrack = async (req, res) => {
@@ -61,7 +72,8 @@ const getLikedTracks = async (req, res) => {
         t.id, t.title, t.duration, t.cover_url, t.genre,
         a.name AS artist_name, a.id AS artist_id,
         al.title AS album_title, al.id AS album_id,
-        lt.liked_at
+        lt.liked_at,
+        true AS is_liked
       FROM liked_tracks lt
       JOIN tracks t ON lt.track_id = t.id
       LEFT JOIN artists a ON t.artist_id = a.id
@@ -70,7 +82,7 @@ const getLikedTracks = async (req, res) => {
       ORDER BY lt.liked_at DESC
     `, [req.user.id]);
 
-        res.json(result.rows);
+        res.json(signCoverUrls(result.rows));
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ error: 'Server error' });
