@@ -29,7 +29,20 @@ const fileFilter = (req, file, cb) => {
 
 const upload = multer({
     storage,
-    fileFilter,
+    fileFilter: (req, file, cb) => {
+        // Allow audio files for 'audio' field, images for 'cover' field
+        if (file.fieldname === 'cover') {
+            const imgExts = ['.jpg', '.jpeg', '.png', '.webp'];
+            const ext = path.extname(file.originalname).toLowerCase();
+            if (imgExts.includes(ext)) {
+                cb(null, true);
+            } else {
+                cb(null, false); // Skip invalid cover, don't error
+            }
+        } else {
+            fileFilter(req, file, cb);
+        }
+    },
     limits: { fileSize: 100 * 1024 * 1024 } // 100 MB max
 });
 
@@ -40,7 +53,10 @@ router.get('/:id', protect, getTrack);
 router.get('/:id/stream', protect, streamTrack);
 
 router.post('/upload', protect, (req, res, next) => {
-    upload.single('audio')(req, res, (err) => {
+    upload.fields([
+        { name: 'audio', maxCount: 1 },
+        { name: 'cover', maxCount: 1 },
+    ])(req, res, (err) => {
         if (err) {
             return res.status(400).json({ error: err.message });
         }

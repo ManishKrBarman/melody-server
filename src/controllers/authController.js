@@ -121,4 +121,131 @@ const getMe = async (req, res) => {
     }
 };
 
-module.exports = { register, login, getMe };
+// UPDATE PROFILE (username, password)
+const updateProfile = async (req, res) => {
+    try {
+        const { username, current_password, new_password } = req.body;
+
+        // Get current user
+        const userResult = await db.query(
+            'SELECT * FROM users WHERE id = $1',
+            [req.user.id]
+        );
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const user = userResult.rows[0];
+
+        // Handle password change
+        if (new_password) {
+            if (!current_password) {
+                return res.status(400).json({ error: 'Current password is required to change password' });
+            }
+
+            const isMatch = await bcrypt.compare(current_password, user.password);
+            if (!isMatch) {
+                return res.status(401).json({ error: 'Current password is incorrect' });
+            }
+
+            if (new_password.length < 6) {
+                return res.status(400).json({ error: 'New password must be at least 6 characters' });
+            }
+
+            const hashedPassword = await bcrypt.hash(new_password, 12);
+            await db.query(
+                'UPDATE users SET password = $1 WHERE id = $2',
+                [hashedPassword, req.user.id]
+            );
+        }
+
+        // Handle username change
+        if (username && username !== user.username) {
+            // Check if username is taken
+            const existing = await db.query(
+                'SELECT id FROM users WHERE username = $1 AND id != $2',
+                [username, req.user.id]
+            );
+            if (existing.rows.length > 0) {
+                return res.status(400).json({ error: 'Username already taken' });
+            }
+
+            await db.query(
+                'UPDATE users SET username = $1 WHERE id = $2',
+                [username, req.user.id]
+            );
+        }
+
+        // Return updated user
+        const updated = await db.query(
+            'SELECT id, username, email, avatar_url, created_at FROM users WHERE id = $1',
+            [req.user.id]
+        );
+
+        res.json({
+            message: 'Profile updated successfully',
+            user: updated.rows[0],
+        });
+
+    } catch (err) {
+        console.error('UpdateProfile error:', err.message);
+        res.status(500).json({ error: 'Server error' });
+    }
+};
+
+// GET USER STATS (personal listening stats)
+const getUserStats = async (req, res) => {
+    try {
+        const userId = req.user.id;
+
+        // Songs listened (unique tracks from play_history)
+        const songsListened = await db.query(
+            'SELECT COUNT(DISTINCT track_id) AS count FROM play_history WHERE user_id = $1',
+            [userId]
+        );
+
+        // Liked songs count
+        const likedSongs = await db.query(
+            'SELECT COUNT(*) AS count FROM liked_tracks WHERE user_id = $1',
+            [userId]
+        );
+
+        // Unique artists listened (through play_history -> tracks -> artists)
+        const artistsListened = await db.query(`
+            SELECT COUNT(DISTINCT t.artist_id) AS count
+            FROM play_history ph
+            JOIN tracks t ON ph.track_id = t.id
+            WHERE ph.user_id = $1 AND t.artist_id IS NOT NULL
+        `, [userId]);
+
+        // Unique albums listened
+        const albumsListened = await db.query(`
+            SELECT COUNT(DISTINCT t.album_id) AS count
+            FROM play_history ph
+            JOIN tracks t ON ph.track_id = t.id
+            WHERE ph.user_id = $1 AND t.album_id IS NOT NULL
+        `, [userId]);
+
+        // Total listening time (sum of durations of played tracks)
+        const listeningTime = await db.query(`
+            SELECT COALESCE(SUM(t.duration), 0) AS total_seconds
+            FROM play_history ph
+            JOIN tracks t ON ph.track_id = t.id
+            WHERE ph.user_id = $1
+        `, [userId]);
+
+        res.json({
+            songs_listened: parseInt(songsListened.rows[0].count) || 0,
+            liked_songs: parseInt(likedSongs.rows[0].count) || 0,
+            artists_listened: parseInt(artistsListened.rows[0].count) || 0,
+            albums_listened: parseInt(albumsListened.rows[0].count) || 0,
+            total_listening_seconds: parseInt(listeningTime.rows[0].total_seconds) || 0,
+        });
+
+    } catch (err) {
+        console.error('GetUserStats error:', err.message);
+        res.status(500).json({ error: 'Server error' });
+    }
+};
+
+module.exports = { register, login, getMe, updateProfile, getUserStats };

@@ -4,16 +4,35 @@ const path = require('path');
 const fs = require('fs');
 const { uploadFile, deleteFile, getSignedUrl } = require('../utils/storage');
 
-// UPLOAD a track
+// UPLOAD a track (supports audio + optional cover image)
 const uploadTrack = async (req, res) => {
     try {
-        const { title, artist_name, album_name, genre, track_number, release_year } = req.body;
-        const file = req.file;
+        const { title, artist_name, album_name, genre, track_number, release_year, duration } = req.body;
+        const audioFile = req.files?.audio?.[0] || req.file;
+        const coverFile = req.files?.cover?.[0] || null;
 
-        if (!file) return res.status(400).json({ error: 'No audio file provided' });
+        if (!audioFile) return res.status(400).json({ error: 'No audio file provided' });
         if (!title) return res.status(400).json({ error: 'Track title is required' });
 
-        // 1. Handle artist
+        // 1. Handle cover art upload (if provided)
+        let coverUrl = null;
+        if (coverFile) {
+            try {
+                const coverExt = path.extname(coverFile.originalname) || '.jpg';
+                const remoteCoverName = `covers/${uuidv4()}${coverExt}`;
+                await uploadFile(coverFile.path, remoteCoverName, coverFile.mimetype || 'image/jpeg');
+                coverUrl = remoteCoverName;
+                fs.unlinkSync(coverFile.path);
+            } catch (coverErr) {
+                console.error('Cover upload failed (non-fatal):', coverErr.message);
+                // Clean up cover file if it exists
+                if (coverFile.path && fs.existsSync(coverFile.path)) {
+                    fs.unlinkSync(coverFile.path);
+                }
+            }
+        }
+
+        // 2. Handle artist
         let artistId = null;
         if (artist_name) {
             const existingArtist = await db.query(
@@ -31,7 +50,7 @@ const uploadTrack = async (req, res) => {
             }
         }
 
-        // 2. Handle album
+        // 3. Handle album
         let albumId = null;
         if (album_name && artistId) {
             const existingAlbum = await db.query(
@@ -40,35 +59,46 @@ const uploadTrack = async (req, res) => {
             );
             if (existingAlbum.rows.length > 0) {
                 albumId = existingAlbum.rows[0].id;
+                // Update album cover if we have one and album doesn't
+                if (coverUrl) {
+                    await db.query(
+                        'UPDATE albums SET cover_url = COALESCE(cover_url, $1) WHERE id = $2',
+                        [coverUrl, albumId]
+                    );
+                }
             } else {
                 const newAlbum = await db.query(
-                    `INSERT INTO albums (id, title, artist_id, genre, release_year)
-           VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-                    [uuidv4(), album_name, artistId, genre || null, release_year || null]
+                    `INSERT INTO albums (id, title, artist_id, cover_url, genre, release_year)
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+                    [uuidv4(), album_name, artistId, coverUrl, genre || null, release_year || null]
                 );
                 albumId = newAlbum.rows[0].id;
             }
         }
 
-        // 3. Upload file to Backblaze B2
-        const ext = path.extname(file.originalname);
+        // 4. Upload audio file to Backblaze B2
+        const ext = path.extname(audioFile.originalname);
         const remoteFileName = `tracks/${uuidv4()}${ext}`;
-        const mimeType = file.mimetype;
+        const mimeType = audioFile.mimetype;
 
-        const fileUrl = await uploadFile(file.path, remoteFileName, mimeType);
+        await uploadFile(audioFile.path, remoteFileName, mimeType);
 
-        // 4. Clean up local temp file
-        fs.unlinkSync(file.path);
+        // 5. Clean up local temp file
+        fs.unlinkSync(audioFile.path);
 
-        // 5. Save track to database
+        // 6. Parse duration (from uploader metadata)
+        const parsedDuration = duration ? parseInt(duration, 10) : null;
+
+        // 7. Save track to database
         const result = await db.query(
             `INSERT INTO tracks 
-        (id, title, artist_id, album_id, file_url, genre, track_number)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+        (id, title, artist_id, album_id, file_url, cover_url, genre, track_number, duration)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING *`,
             [
                 uuidv4(), title, artistId, albumId,
-                remoteFileName, genre || null, track_number || null
+                remoteFileName, coverUrl, genre || null,
+                track_number || null, parsedDuration
             ]
         );
 
@@ -79,9 +109,14 @@ const uploadTrack = async (req, res) => {
 
     } catch (err) {
         console.error('Upload error:', err.message);
-        // Clean up temp file if it exists
-        if (req.file && fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
+        // Clean up temp files if they exist
+        const audioFile = req.files?.audio?.[0] || req.file;
+        if (audioFile && fs.existsSync(audioFile.path)) {
+            fs.unlinkSync(audioFile.path);
+        }
+        const coverFile = req.files?.cover?.[0];
+        if (coverFile && fs.existsSync(coverFile.path)) {
+            fs.unlinkSync(coverFile.path);
         }
         res.status(500).json({ error: 'Upload failed: ' + err.message });
     }
