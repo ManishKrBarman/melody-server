@@ -288,4 +288,32 @@ const searchTracks = async (req, res) => {
     }
 };
 
-module.exports = { uploadTrack, getAllTracks, getTrack, streamTrack, deleteTrack, searchTracks };
+// GET cover image URL (signed URL for cover art)
+const getCoverUrl = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const result = await db.query(
+            'SELECT cover_url, title FROM tracks WHERE id = $1',
+            [id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Track not found' });
+        }
+
+        const track = result.rows[0];
+        if (!track.cover_url) {
+            return res.status(404).json({ error: 'No cover art available' });
+        }
+
+        const signedUrl = getSignedUrl(track.cover_url);
+        res.json({ cover_url: signedUrl });
+
+    } catch (err) {
+        console.error('Cover URL error:', err.message);
+        res.status(500).json({ error: 'Server error' });
+    }
+};
+
+module.exports = { uploadTrack, getAllTracks, getTrack, streamTrack, getCoverUrl, deleteTrack, searchTracks };

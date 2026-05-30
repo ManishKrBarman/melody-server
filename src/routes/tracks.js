@@ -5,7 +5,7 @@ const path = require('path');
 const { protect } = require('../middleware/auth');
 const {
     uploadTrack, getAllTracks, getTrack,
-    streamTrack, deleteTrack, searchTracks
+    streamTrack, getCoverUrl, deleteTrack, searchTracks
 } = require('../controllers/tracksController');
 
 // Multer config — save to uploads/ folder temporarily
@@ -51,6 +51,7 @@ router.get('/search', protect, searchTracks);
 router.get('/', protect, getAllTracks);
 router.get('/:id', protect, getTrack);
 router.get('/:id/stream', protect, streamTrack);
+router.get('/:id/cover', protect, getCoverUrl);
 
 router.post('/upload', protect, (req, res, next) => {
     upload.fields([
