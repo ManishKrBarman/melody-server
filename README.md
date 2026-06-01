@@ -1,4 +1,4 @@
-# 🎵 Melody Server
+#  Melody Server
 
 REST API backend for the Melody music streaming application, built with **Node.js**, **Express**, and **PostgreSQL**.
 

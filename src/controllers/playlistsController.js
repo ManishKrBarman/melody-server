@@ -116,7 +116,7 @@ const addTrackToPlaylist = async (req, res) => {
       VALUES ($1, $2, $3, $4)
     `, [uuidv4(), id, track_id, position]);
 
-    res.json({ message: 'Track added to playlist ✅' });
+    res.json({ message: 'Track added to playlist ' });
   } catch (err) {
     console.error(err.message);
     res.status(500).json({ error: 'Server error' });

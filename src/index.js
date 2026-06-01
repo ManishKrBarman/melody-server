@@ -11,6 +11,7 @@ const albumsRoutes = require('./routes/albums.js');
 const playlistsRoutes = require('./routes/playlists.js');
 const likesRoutes = require('./routes/likes.js');
 const historyRoutes = require('./routes/history.js');
+const smartSearchRoutes = require('./routes/smartSearch');
 
 
 const app = express();
@@ -31,6 +32,7 @@ app.use('/api/albums', albumsRoutes);
 app.use('/api/playlists', playlistsRoutes);
 app.use('/api/likes', likesRoutes);
 app.use('/api/history', historyRoutes);
+app.use('/api/smart-search', smartSearchRoutes);
 
 
 // Health check route
