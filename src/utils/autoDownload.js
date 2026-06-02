@@ -14,7 +14,7 @@ const db = require('../config/db');
 async function searchYouTube(query) {
   try {
     const safeQuery = query.replace(/'/g, '');
-    const cmd = `yt-dlp "ytsearch3:${safeQuery}" --print "%(id)s|||%(title)s|||%(duration)s|||%(uploader)s" --no-playlist`;
+    const cmd = `yt-dlp --js-runtimes nodejs "ytsearch3:${safeQuery}" --print "%(id)s|||%(title)s|||%(duration)s|||%(uploader)s" --no-playlist`;
     const { stdout } = await execAsync(cmd, { timeout: 30000 });
 
     const results = stdout.trim().split('\n')
@@ -44,6 +44,7 @@ async function downloadFromYouTube(videoId, expectedTitle, expectedArtist) {
     // Download as MP3
     const cmd = [
       'yt-dlp',
+      '--js-runtimes nodejs',
       `"https://www.youtube.com/watch?v=${videoId}"`,
       '--extract-audio',
       '--audio-format mp3',
@@ -53,6 +54,10 @@ async function downloadFromYouTube(videoId, expectedTitle, expectedArtist) {
       `--output "${tempFile}.%(ext)s"`,
       '--no-playlist',
       '--quiet',
+      '--no-check-certificates',
+      '--extractor-retries 3',
+      '--socket-timeout 30',
+      '--extractor-args "youtube:player_client=android,web"',
     ].join(' ');
 
     await execAsync(cmd, { timeout: 120000 });
@@ -68,7 +73,7 @@ async function downloadFromYouTube(videoId, expectedTitle, expectedArtist) {
 
   } catch (err) {
     // Clean up
-    try { fs.unlinkSync(`${tempFile}.mp3`); } catch {}
+    try { fs.unlinkSync(`${tempFile}.mp3`); } catch { }
     throw err;
   }
 }
@@ -204,7 +209,7 @@ async function autoDownloadTrack(searchQuery) {
 
   } finally {
     // Always clean up temp file
-    try { fs.unlinkSync(mp3Path); } catch {}
+    try { fs.unlinkSync(mp3Path); } catch { }
   }
 }
 
