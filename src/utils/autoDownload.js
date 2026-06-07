@@ -133,6 +133,9 @@ function isRetryableError(errorMsg) {
     'n]',
     'This helps protect our community',
     'confirm you',
+    'Requested format',
+    'Failed to extract',
+    'player response',
   ];
   return retryable.some(pattern => errorMsg.toLowerCase().includes(pattern.toLowerCase()));
 }

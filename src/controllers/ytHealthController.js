@@ -100,6 +100,7 @@ const getYtHealth = async (req, res) => {
 
   // 5. Quick YouTube connectivity test (just metadata, no download)
   // Use 'web' client — iOS does NOT work when cookies are present
+  // Use --flat-playlist to only extract search metadata (no format resolution)
   try {
     const cmd = [
       'yt-dlp',
@@ -109,6 +110,7 @@ const getYtHealth = async (req, res) => {
       '--no-warnings',
       cookieExists ? `--cookies "${COOKIES_PATH}"` : '',
       '"ytsearch1:test audio"',
+      '--flat-playlist',
       '--print "%(id)s"',
       '--no-playlist',
       '--quiet',
