@@ -83,13 +83,30 @@ const getYtHealth = async (req, res) => {
     };
   }
 
-  // 4. Quick YouTube connectivity test (just metadata, no download)
+  // 4. Check for conflicting nodejs binary (yt-dlp only recognizes 'node', not 'nodejs')
+  try {
+    const { stdout } = await execAsync('which nodejs 2>/dev/null || where nodejs 2>nul', { timeout: 5000 });
+    if (stdout.trim()) {
+      checks.checks.nodejs_conflict = {
+        status: 'warning',
+        message: 'Found "nodejs" binary which yt-dlp ignores. yt-dlp only recognizes "node".',
+        path: stdout.trim(),
+        fix: 'This is harmless if "node" is also available (checked above). yt-dlp will use "node".',
+      };
+    }
+  } catch {
+    // No nodejs binary found — that's fine
+  }
+
+  // 5. Quick YouTube connectivity test (just metadata, no download)
+  // Use 'web' client — iOS does NOT work when cookies are present
   try {
     const cmd = [
       'yt-dlp',
-      '--extractor-args "youtube:player_client=ios;player_skip=webpage"',
+      '--extractor-args "youtube:player_client=web"',
       '--no-check-certificates',
       '--socket-timeout 15',
+      '--no-warnings',
       cookieExists ? `--cookies "${COOKIES_PATH}"` : '',
       '"ytsearch1:test audio"',
       '--print "%(id)s"',
@@ -115,14 +132,21 @@ const getYtHealth = async (req, res) => {
   } catch (err) {
     const errMsg = err.stderr || err.message || '';
     const isBotBlock = errMsg.toLowerCase().includes('sign in') || errMsg.toLowerCase().includes('bot');
+    const isPlayerResponse = errMsg.toLowerCase().includes('failed to extract any player response');
 
     checks.checks.youtube_access = {
       status: 'error',
-      error: isBotBlock ? 'YouTube is blocking this server (bot detection)' : 'YouTube search failed',
-      detail: errMsg.split('\n').slice(0, 3).join(' | '),
+      error: isBotBlock
+        ? 'YouTube is blocking this server (bot detection)'
+        : isPlayerResponse
+          ? 'yt-dlp cannot extract player response — likely outdated version'
+          : 'YouTube search failed',
+      detail: errMsg.split('\n').filter(l => l.trim()).slice(0, 3).join(' | '),
       fix: isBotBlock
         ? 'Upload fresh cookies from your browser. If still failing, the server IP may be permanently flagged.'
-        : 'Check yt-dlp version and network connectivity',
+        : isPlayerResponse
+          ? 'Update yt-dlp: sudo pip install -U yt-dlp (or: yt-dlp -U)'
+          : 'Check yt-dlp version and network connectivity',
     };
   }
 

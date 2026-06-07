@@ -42,32 +42,59 @@ function checkCookieFreshness() {
 // ─── Download Strategies ─────────────────────────────────────────────
 // Each strategy uses different player clients and flags to evade detection.
 // On failure, the system rotates to the next strategy automatically.
-const STRATEGIES = [
+//
+// IMPORTANT: iOS client does NOT support cookies — yt-dlp will skip it
+// when cookies are present. We use cookie-compatible clients only.
+
+// Strategies when cookies are available (most common case on GCP)
+const COOKIE_STRATEGIES = [
   {
-    name: 'ios-skip-webpage',
-    description: 'iOS client, skip webpage (avoids bot check page entirely)',
+    name: 'web-cookies',
+    description: 'Web client with cookies (most reliable with authentication)',
     flags: [
-      '--extractor-args "youtube:player_client=ios,web;player_skip=webpage"',
+      '--extractor-args "youtube:player_client=web"',
       '--no-check-certificates',
-      '--user-agent "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X)"',
+      '--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"',
     ],
   },
   {
-    name: 'android-mweb',
-    description: 'Android + mobile web clients',
+    name: 'android-cookies',
+    description: 'Android client with cookies',
     flags: [
-      '--extractor-args "youtube:player_client=android,mweb"',
+      '--extractor-args "youtube:player_client=android"',
       '--no-check-certificates',
       '--user-agent "com.google.android.youtube/19.29.37 (Linux; U; Android 14; en_US; Pixel 8 Pro Build/UQ1A.240205.002)"',
     ],
   },
   {
-    name: 'web-with-po-token',
-    description: 'Web client with full JS execution for PO token',
+    name: 'mweb-cookies',
+    description: 'Mobile web client with cookies',
     flags: [
-      '--extractor-args "youtube:player_client=web"',
+      '--extractor-args "youtube:player_client=mweb"',
       '--no-check-certificates',
-      '--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"',
+      '--user-agent "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"',
+    ],
+  },
+];
+
+// Strategies when NO cookies are available (less likely to work from GCP)
+const NO_COOKIE_STRATEGIES = [
+  {
+    name: 'ios-no-cookies',
+    description: 'iOS client without cookies (skips webpage bot check)',
+    flags: [
+      '--extractor-args "youtube:player_client=ios;player_skip=webpage"',
+      '--no-check-certificates',
+      '--user-agent "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X)"',
+    ],
+  },
+  {
+    name: 'android-no-cookies',
+    description: 'Android client without cookies',
+    flags: [
+      '--extractor-args "youtube:player_client=android;player_skip=webpage"',
+      '--no-check-certificates',
+      '--user-agent "com.google.android.youtube/19.29.37 (Linux; U; Android 14; en_US; Pixel 8 Pro Build/UQ1A.240205.002)"',
     ],
   },
 ];
@@ -79,6 +106,11 @@ const COMMON_FLAGS = [
   '--no-warnings',
   '--prefer-insecure',
 ];
+
+function getStrategies() {
+  const hasCookies = fs.existsSync(COOKIES_PATH);
+  return hasCookies ? COOKIE_STRATEGIES : NO_COOKIE_STRATEGIES;
+}
 
 function buildFlags(strategy) {
   const cookiesFlag = getCookiesFlag();
@@ -109,13 +141,14 @@ function isRetryableError(errorMsg) {
 async function searchYouTube(query) {
   const safeQuery = query.replace(/'/g, '').replace(/"/g, '');
   let lastError = null;
+  const strategies = getStrategies();
 
-  for (let i = 0; i < STRATEGIES.length; i++) {
-    const strategy = STRATEGIES[i];
+  for (let i = 0; i < strategies.length; i++) {
+    const strategy = strategies[i];
     const flags = buildFlags(strategy);
 
     try {
-      console.log(`  Search attempt ${i + 1}/${STRATEGIES.length} [${strategy.name}]`);
+      console.log(`  Search attempt ${i + 1}/${strategies.length} [${strategy.name}]`);
 
       const cmd = [
         'yt-dlp',
@@ -153,7 +186,7 @@ async function searchYouTube(query) {
       const errMsg = err.stderr || err.message || '';
       console.error(`  ✗ Strategy [${strategy.name}] failed: ${errMsg.split('\n')[0]}`);
 
-      if (isRetryableError(errMsg) && i < STRATEGIES.length - 1) {
+      if (isRetryableError(errMsg) && i < strategies.length - 1) {
         const delay = (i + 1) * 2000; // 2s, 4s, 6s
         console.log(`  Waiting ${delay / 1000}s before next strategy...`);
         await sleep(delay);
@@ -175,13 +208,14 @@ async function downloadFromYouTube(videoId) {
   const tempDir = os.tmpdir();
   const tempFile = path.join(tempDir, `melody_${uuidv4()}`);
   let lastError = null;
+  const strategies = getStrategies();
 
-  for (let i = 0; i < STRATEGIES.length; i++) {
-    const strategy = STRATEGIES[i];
+  for (let i = 0; i < strategies.length; i++) {
+    const strategy = strategies[i];
     const flags = buildFlags(strategy);
 
     try {
-      console.log(`  Download attempt ${i + 1}/${STRATEGIES.length} [${strategy.name}]`);
+      console.log(`  Download attempt ${i + 1}/${strategies.length} [${strategy.name}]`);
       console.log(`  URL: https://youtube.com/watch?v=${videoId}`);
 
       const cmd = [
@@ -229,7 +263,7 @@ async function downloadFromYouTube(videoId) {
       try { fs.unlinkSync(`${tempFile}.webm`); } catch { }
       try { fs.unlinkSync(`${tempFile}.m4a`); } catch { }
 
-      if (isRetryableError(errMsg) && i < STRATEGIES.length - 1) {
+      if (isRetryableError(errMsg) && i < strategies.length - 1) {
         const delay = (i + 1) * 3000; // 3s, 6s, 9s
         console.log(`  Waiting ${delay / 1000}s before next strategy...`);
         await sleep(delay);
