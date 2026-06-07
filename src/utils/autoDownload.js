@@ -6,45 +6,73 @@ const path = require('path');
 const os = require('os');
 const { v4: uuidv4 } = require('uuid');
 const mm = require('music-metadata');
-const sanitize = require('sanitize-filename');
 const { uploadFile } = require('./storage');
 const db = require('../config/db');
+
+// Cookies file path — optional but helps bypass bot detection
+const COOKIES_PATH = path.join(__dirname, '../../youtube-cookies.txt');
+const cookiesFlag = fs.existsSync(COOKIES_PATH)
+  ? `--cookies "${COOKIES_PATH}"`
+  : '';
+
+// Common yt-dlp flags that bypass bot detection
+const BYPASS_FLAGS = [
+  '--extractor-args "youtube:player_client=android,web"',
+  '--no-check-certificates',
+  '--extractor-retries 5',
+  '--socket-timeout 30',
+  '--user-agent "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36"',
+  cookiesFlag,
+].filter(Boolean).join(' ');
 
 // Search YouTube for a song
 async function searchYouTube(query) {
   try {
-    const safeQuery = query.replace(/'/g, '');
-    const cmd = `yt-dlp --js-runtimes nodejs "ytsearch3:${safeQuery}" --print "%(id)s|||%(title)s|||%(duration)s|||%(uploader)s" --no-playlist`;
-    const { stdout } = await execAsync(cmd, { timeout: 30000 });
+    const safeQuery = query.replace(/'/g, '').replace(/"/g, '');
+    const cmd = [
+      'yt-dlp',
+      BYPASS_FLAGS,
+      `"ytsearch5:${safeQuery}"`,
+      '--print "%(id)s|||%(title)s|||%(duration)s|||%(uploader)s"',
+      '--no-playlist',
+      '--quiet',
+    ].join(' ');
+
+    const { stdout } = await execAsync(cmd, { timeout: 40000 });
 
     const results = stdout.trim().split('\n')
       .filter(Boolean)
       .map(line => {
-        const [id, title, duration, uploader] = line.split('|||');
-        return { id, title, duration: parseInt(duration), uploader };
+        const parts = line.split('|||');
+        if (parts.length < 4) return null;
+        const [id, title, duration, uploader] = parts;
+        return {
+          id: id?.trim(),
+          title: title?.trim(),
+          duration: parseInt(duration) || 0,
+          uploader: uploader?.trim(),
+        };
       })
-      // Filter out long videos (> 8 min) — likely not songs
-      .filter(r => r.duration && r.duration < 480);
+      .filter(r => r && r.id && r.duration > 0 && r.duration < 600);
 
     return results;
   } catch (err) {
-    console.error('YouTube search error:', err.message);
+    console.error('YouTube search error:', err.message?.split('\n')[0]);
     return [];
   }
 }
 
 // Download best match from YouTube
-async function downloadFromYouTube(videoId, expectedTitle, expectedArtist) {
+async function downloadFromYouTube(videoId) {
   const tempDir = os.tmpdir();
   const tempFile = path.join(tempDir, `melody_${uuidv4()}`);
 
   try {
     console.log(`  Downloading: https://youtube.com/watch?v=${videoId}`);
 
-    // Download as MP3
     const cmd = [
       'yt-dlp',
-      '--js-runtimes nodejs',
+      BYPASS_FLAGS,
       `"https://www.youtube.com/watch?v=${videoId}"`,
       '--extract-audio',
       '--audio-format mp3',
@@ -54,25 +82,30 @@ async function downloadFromYouTube(videoId, expectedTitle, expectedArtist) {
       `--output "${tempFile}.%(ext)s"`,
       '--no-playlist',
       '--quiet',
-      '--no-check-certificates',
-      '--extractor-retries 3',
-      '--socket-timeout 30',
-      '--extractor-args "youtube:player_client=android,web"',
     ].join(' ');
 
-    await execAsync(cmd, { timeout: 120000 });
+    await execAsync(cmd, { timeout: 180000 });
 
+    // Check for mp3 file
     const mp3Path = `${tempFile}.mp3`;
-
-    if (!fs.existsSync(mp3Path)) {
-      throw new Error('Download failed — file not found');
+    if (fs.existsSync(mp3Path)) {
+      console.log(`  Downloaded successfully`);
+      return mp3Path;
     }
 
-    console.log(` Downloaded successfully`);
-    return mp3Path;
+    // Sometimes yt-dlp saves with different extension
+    const files = fs.readdirSync(tempDir)
+      .filter(f => f.startsWith(path.basename(tempFile)))
+      .map(f => path.join(tempDir, f));
+
+    if (files.length > 0) {
+      console.log(`  Downloaded successfully`);
+      return files[0];
+    }
+
+    throw new Error('Download failed — file not found after download');
 
   } catch (err) {
-    // Clean up
     try { fs.unlinkSync(`${tempFile}.mp3`); } catch { }
     throw err;
   }
@@ -120,18 +153,14 @@ async function autoDownloadTrack(searchQuery) {
   // 1. Search YouTube
   const results = await searchYouTube(searchQuery);
   if (results.length === 0) {
-    throw new Error('No results found on YouTube');
+    throw new Error('No results found on YouTube — YouTube may be blocking requests. Try again later.');
   }
 
   const best = results[0];
   console.log(` Best match: ${best.title} (${best.duration}s)`);
 
   // 2. Download
-  const mp3Path = await downloadFromYouTube(
-    best.id,
-    best.title,
-    best.uploader
-  );
+  const mp3Path = await downloadFromYouTube(best.id);
 
   try {
     // 3. Extract metadata
@@ -185,7 +214,7 @@ async function autoDownloadTrack(searchQuery) {
       fs.writeFileSync(tempCoverPath, meta.coverBuffer);
       await uploadFile(tempCoverPath, remoteCoverName, meta.coverMime);
       coverUrl = remoteCoverName;
-      fs.unlinkSync(tempCoverPath);
+      try { fs.unlinkSync(tempCoverPath); } catch { }
     }
 
     // 8. Save to database
@@ -208,7 +237,6 @@ async function autoDownloadTrack(searchQuery) {
     return track;
 
   } finally {
-    // Always clean up temp file
     try { fs.unlinkSync(mp3Path); } catch { }
   }
 }
