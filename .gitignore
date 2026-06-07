@@ -25,5 +25,10 @@ desktop.ini
 *.swp
 *.swo
 
+# YouTube cookies (sensitive — Google account access)
+youtube_cookies.txt
+youtube-cookies.txt
+cookies.txt
+
 # Gemini
 .gemini/

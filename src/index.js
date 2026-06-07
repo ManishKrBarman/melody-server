@@ -12,6 +12,7 @@ const playlistsRoutes = require('./routes/playlists.js');
 const likesRoutes = require('./routes/likes.js');
 const historyRoutes = require('./routes/history.js');
 const smartSearchRoutes = require('./routes/smartSearch');
+const ytHealthRoutes = require('./routes/ytHealth');
 
 
 const app = express();
@@ -33,6 +34,7 @@ app.use('/api/playlists', playlistsRoutes);
 app.use('/api/likes', likesRoutes);
 app.use('/api/history', historyRoutes);
 app.use('/api/smart-search', smartSearchRoutes);
+app.use('/api/yt-health', ytHealthRoutes);
 
 
 // Health check route
